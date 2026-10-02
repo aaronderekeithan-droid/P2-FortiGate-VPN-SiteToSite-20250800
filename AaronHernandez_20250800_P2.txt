@@ -1,0 +1,205 @@
+=====================================================================
+ PRACTICA 2 - VPN SITE-TO-SITE CON FORTIGATE (Infraestructura 1)
+ Aaron Hernandez - Matricula 2025-0800 - ITLA
+ Comandos importantes del laboratorio (PNETLab)
+ Link del video: https://youtu.be/Fb0aanVwJzY
+=====================================================================
+
+DIRECCIONAMIENTO
+  Usuarios VLAN 10 ........ 192.168.8.0/25   (gateway .1, DHCP .10-.100)
+  Servidor ................ 192.168.8.128/28 (gateway .129, servidor .130)
+  ISP - FW-A (publica) .... 20.25.8.0/30     (ISP .1, FW-A .2)
+  ISP - FW-B (publica) .... 20.25.8.4/30     (ISP .5, FW-B .6)
+
+CABLEADO
+  FW-A port2 - ISP e0/0        FW-B port2 - ISP e0/1
+  FW-A port3 - SW-A e0/0       FW-B port3 - Servidor Linux e0
+  SW-A e0/1  - PC-Usuario (Docker) eth1
+  FW-A port1 y FW-B port1 - Cloud0 (solo para abrir la GUI)
+
+
+---------------------------------------------------------------------
+ 1. ISP (Cisco IOL L3)
+---------------------------------------------------------------------
+enable
+configure terminal
+hostname ISP
+no ip domain-lookup
+interface Ethernet0/0
+ description A-FW-A
+ ip address 20.25.8.1 255.255.255.252
+ no shutdown
+interface Ethernet0/1
+ description A-FW-B
+ ip address 20.25.8.5 255.255.255.252
+ no shutdown
+end
+write memory
+
+# Verificacion
+show ip interface brief
+
+
+---------------------------------------------------------------------
+ 2. SW-A (Cisco IOL L2) - VLAN 10
+---------------------------------------------------------------------
+enable
+configure terminal
+hostname SW-A
+no ip domain-lookup
+vlan 10
+ name USUARIOS
+interface Ethernet0/0
+ switchport trunk encapsulation dot1q
+ switchport mode trunk
+ switchport trunk allowed vlan 10
+ no shutdown
+interface Ethernet0/1
+ switchport mode access
+ switchport access vlan 10
+ spanning-tree portfast
+ no shutdown
+end
+write memory
+
+# Verificacion
+show vlan brief
+show interfaces trunk
+
+
+---------------------------------------------------------------------
+ 3. FORTIGATE - ACCESO INICIAL POR CONSOLA (FW-A y FW-B)
+    Usuario: admin, contrasena vacia; el sistema pide definir una nueva.
+    Solo se configura la interfaz de gestion para poder abrir la GUI.
+    TODO lo demas se configura por GUI.
+---------------------------------------------------------------------
+config system global
+ set admin-https-redirect disable
+end
+config system interface
+ edit port1
+  set mode dhcp
+  set defaultgw disable
+  set allowaccess ping http https ssh
+ next
+end
+get system interface physical
+
+# Abrir la GUI en el navegador: http://<IP de port1>
+
+
+---------------------------------------------------------------------
+ 4. FORTIGATE - PARAMETROS CONFIGURADOS POR GUI (referencia, no son comandos)
+---------------------------------------------------------------------
+FW-A
+  System > Settings ............ Host name: FW-A
+  Network > Interfaces
+    port2 ...................... Alias WAN-ISP, Role WAN, 20.25.8.2/255.255.255.252, PING
+    VLAN10-USUARIOS ............ Type VLAN, port3, VLAN ID 10, Role LAN,
+                                 192.168.8.1/255.255.255.128, PING
+      DHCP Server .............. Rango 192.168.8.10 - 192.168.8.100, mascara 255.255.255.128,
+                                 gateway = IP de la interfaz, DNS 8.8.8.8
+  Network > Static Routes ...... 0.0.0.0/0 via 20.25.8.1, interfaz port2
+  Policy & Objects > Firewall Policy
+    USUARIOS-a-INTERNET ........ VLAN10-USUARIOS -> port2, all, all, ALL, ACCEPT, NAT habilitado
+  VPN > IPsec Wizard
+    Name VPN-A-to-B, Site to Site, FortiGate, No NAT between sites
+    Remote IP 20.25.8.6, Outgoing port2, Pre-shared Key (misma en ambos)
+    Local interface VLAN10-USUARIOS, Local 192.168.8.0/25, Remote 192.168.8.128/28
+    Internet Access: None
+
+FW-B
+  System > Settings ............ Host name: FW-B
+  Network > Interfaces
+    port2 ...................... Alias WAN-ISP, Role WAN, 20.25.8.6/255.255.255.252, PING
+    port3 ...................... Alias LAN-SERVIDOR, Role LAN, 192.168.8.129/255.255.255.240, PING
+  Network > Static Routes ...... 0.0.0.0/0 via 20.25.8.5, interfaz port2
+  Policy & Objects > Firewall Policy
+    SERVIDOR-a-INTERNET ........ port3 -> port2, all, all, ALL, ACCEPT, NAT habilitado
+  VPN > IPsec Wizard
+    Name VPN-B-to-A, Site to Site, FortiGate, No NAT between sites
+    Remote IP 20.25.8.2, Outgoing port2, Pre-shared Key (la misma)
+    Local interface port3, Local 192.168.8.128/28, Remote 192.168.8.0/25
+    Internet Access: None
+
+Backup de la configuracion (por GUI):
+  Menu del usuario (arriba a la derecha) > Configuration > Backup > Local PC
+
+Simular VPN caida (por GUI):
+  FW-A > Network > Interfaces > port2 > Status: Disabled  (volver a Enabled para recuperar)
+
+
+---------------------------------------------------------------------
+ 5. SERVIDOR LINUX (consola) - HTTPS con Python y certificado autofirmado
+---------------------------------------------------------------------
+ip addr add 192.168.8.130/28 dev eth0
+ip route add default via 192.168.8.129
+ping -c 2 192.168.8.129
+
+openssl req -x509 -newkey rsa:2048 -nodes -keyout /root/key.pem -out /root/cert.pem -days 365 -subj "/CN=WEB-Server"
+mkdir -p /var/www/html
+echo "<h1>WEB-Server HTTPS - Aaron Hernandez - 2025-0800</h1>" > /var/www/html/index.html
+cd /var/www/html
+setsid nohup python3 -c "import http.server,ssl;c=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);c.load_cert_chain('/root/cert.pem','/root/key.pem');s=http.server.HTTPServer(('0.0.0.0',443),http.server.SimpleHTTPRequestHandler);s.socket=c.wrap_socket(s.socket,server_side=True);s.serve_forever()" >/dev/null 2>&1 &
+
+# Verificacion
+ss -tlnp | grep 443
+
+
+---------------------------------------------------------------------
+ 6. PC-USUARIO (Docker pnetlab/ubuntu_sv:latest) - usar eth1
+---------------------------------------------------------------------
+ip link set eth1 up
+dhclient -v eth1
+ip -br a
+ip route
+
+
+---------------------------------------------------------------------
+ 7. PRUEBAS NECESARIAS (VPN ACTIVA)
+---------------------------------------------------------------------
+# ISP: debe estar up/up, y el ping al servidor DEBE FALLAR (no tiene ruta)
+show ip interface brief
+ping 192.168.8.130
+
+# FortiGate (GUI): VPN > IPsec Tunnels y Monitor > IPsec Monitor = Up
+#                  Network > Static Routes = default + ruta por el tunel + blackhole
+
+# Servidor: Python escuchando en el 443
+ss -tlnp | grep 443
+
+# PC-Usuario: crear el script pruebas-usuario.sh (un solo comando) y ejecutarlo
+printf '%s\n' '#!/bin/bash' 'date' 'ip -br a' 'ip route' 'ping -c 3 192.168.8.1' 'ping -c 3 20.25.8.1' 'ping -c 4 192.168.8.130' 'echo TRACEROUTE' 'for t in 1 2 3 4; do echo "TTL $t"; ping -c 1 -W 2 -t $t 192.168.8.130 | grep -E "From|bytes from"; done' 'curl -k -v --max-time 8 https://192.168.8.130' > pruebas-usuario.sh
+chmod +x pruebas-usuario.sh
+./pruebas-usuario.sh
+
+# Resultado esperado con la VPN activa:
+#   ping 192.168.8.1 .......... responde (TTL 255)
+#   ping 20.25.8.1 ............ responde (TTL 254)  -> prueba de NAT
+#   ping 192.168.8.130 ........ responde (TTL 62)   -> a traves de la VPN
+#   TTL 1 = FW-A, TTL 2 = FW-B, TTL 3 y 4 = servidor (traceroute)
+#   curl -k -v ................ handshake TLS y pagina HTML del servidor
+
+
+---------------------------------------------------------------------
+ 8. PRUEBA DE VPN CAIDA
+---------------------------------------------------------------------
+# 1) GUI FW-A: Network > Interfaces > port2 > Status: Disabled
+# 2) PC-Usuario: deben FALLAR
+ping -c 3 -W 1 192.168.8.130
+curl -k --max-time 5 https://192.168.8.130
+# 3) GUI FW-A: Monitor > IPsec Monitor = Down
+# 4) GUI FW-A: port2 > Status: Enabled, esperar 20-30 s y repetir (deben funcionar)
+ping -c 4 192.168.8.130
+curl -k --max-time 8 https://192.168.8.130
+
+
+---------------------------------------------------------------------
+ 9. EVIDENCIA OPCIONAL DEL NAT (consola del ISP)
+---------------------------------------------------------------------
+debug ip icmp
+# (hacer ping desde el usuario a 20.25.8.1, capturar y luego:)
+undebug all
+
+# Exportar configuracion de ISP y SW-A
+show running-config
