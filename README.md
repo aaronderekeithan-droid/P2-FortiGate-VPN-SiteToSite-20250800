@@ -397,9 +397,6 @@ curl -k --max-time 5 https://192.168.8.130
 | IPsec Monitor de FW-A | Túnel Down |
 | `ping 192.168.8.130` desde el ISP | Sin respuesta (el ISP no tiene ruta al servidor, con VPN o sin ella) |
 
-![FW-A: IPsec Monitor con el túnel caído]( /12-caida-monitor-down.png)
-
-![Pruebas con la VPN caída]( /13-caida-pruebas.png)
 
 ### 7.5 Recuperación
 
@@ -410,7 +407,6 @@ ping -c 4 192.168.8.130
 curl -k --max-time 8 https://192.168.8.130
 ```
 
-![Recuperación de la comunicación]( /14-recuperacion.png)
 
 **Conclusión de las pruebas:** el usuario solo alcanza al servidor mientras el túnel IPsec está activo.
 
@@ -777,5 +773,3 @@ end
 ```
 
 ---
-
-> **Nota:** la configuración de este Anexo B es **demostrativa**. Se reconstruyó a partir de los comandos y parámetros aplicados en el laboratorio para facilitar su lectura; no es una exportación literal de los equipos (por ejemplo, los números de política y las propuestas de cifrado del túnel son representativos). Los archivos exportados directamente de cada equipo se encuentran en la carpeta [`running-configs/`](running-configs/).
